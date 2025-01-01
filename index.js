@@ -29,7 +29,7 @@ const client = new MongoClient(MONGO_URI);
 app.use(bodyParser.json());
 
 // ------------------------
-// System Instructions (ไม่แก้ไขหรือตัดทอน)
+// System Instructions (แก้ไขให้พร้อมใช้งานกับแอปริคอตแห้ง)
 // ------------------------
 const systemInstructions = `
 คุณเป็นแอดมินสำหรับตอบคำถามและขายสินค้าในเพจ Facebook  
@@ -119,7 +119,7 @@ const systemInstructions = `
        - 3 ถุง = 250 บาท (ส่งฟรี)
      (ภายใน 3 วัน)
    • มีบริการเก็บเงินปลายทาง
-   • หากต้องการดูรูปภาพ: “[SEND_IMAGE_APRICOT:https://imgur.com/a/fbRWGtt]”
+   • หากต้องการดูรูปภาพ: “[SEND_IMAGE_APRICOT:https://i.imgur.com/XY0Nz82.jpeg]”
 `;
 
 // ------------------------
@@ -249,7 +249,7 @@ async function getAssistantResponse(history, message) {
 
     // เรียกโมเดลผ่าน OpenAI API (เปลี่ยนชื่อโมเดลตามต้องการ)
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // ตัวอย่างโมเดล
+      model: "gpt-4o", // ตัวอย่างโมเดล
       messages: messages,
     });
 
@@ -289,13 +289,13 @@ async function saveChatHistory(senderId, message, response) {
 // ฟังก์ชัน: sendTextMessage (รองรับหลายรูปพร้อมกัน)
 // ------------------------
 function sendTextMessage(senderId, response) {
-  // Regex แบบ global เพื่อจับหลายคำสั่ง [SEND_IMAGE_XXX:URL]
+  // Regex แบบ global เพื่อจับหลายคำสั่ง [SEND_IMAGE_APRICOT:URL]
   const imageRegex = /\[SEND_IMAGE_APRICOT:(https?:\/\/[^\s]+)\]/g;
 
   // matchAll เพื่อดึง match หลายรายการ
   const matches = [...response.matchAll(imageRegex)];
 
-  // ตัดคำสั่ง [SEND_IMAGE_XXX:URL] ออกจากข้อความทั้งหมด
+  // ตัดคำสั่ง [SEND_IMAGE_APRICOT:URL] ออกจากข้อความทั้งหมด
   let textPart = response.replace(imageRegex, '').trim();
 
   // ส่งข้อความ (ถ้ามี text เหลือ)
@@ -305,7 +305,7 @@ function sendTextMessage(senderId, response) {
 
   // วนลูปส่งรูปทีละ match
   matches.forEach(match => {
-    const imageUrl = match[2];  // URL
+    const imageUrl = match[2];  // URL คือ group[2] จาก regex
     sendImageMessage(senderId, imageUrl);
   });
 }
