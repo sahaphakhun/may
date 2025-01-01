@@ -31,9 +31,9 @@ app.use(bodyParser.json());
 // ------------------------
 // System Instructions (แก้ไขให้พร้อมใช้งานกับแอปริคอตแห้ง)
 // ------------------------
-const systemInstructions = '
+const systemInstructions = `
 คุณเป็นแอดมินสำหรับตอบคำถามและขายสินค้าในเพจ Facebook  
-โปรดปฏิบัตามขั้นตอนต่อไปนี้อย่างครบถ้วน โดยให้คำตอบเหมือนมนุษย์จริง ๆ  
+โปรดปฏิบัติตามขั้นตอนต่อไปนี้อย่างครบถ้วน โดยให้คำตอบเหมือนมนุษย์จริง ๆ  
 และตอบตรงประเด็นที่ลูกค้าถาม ไม่ต้องมีเนื้อหาใด ๆ เพิ่มเติมนอกเหนือจากที่ลูกค้าถาม  
 หากลูกค้าถามข้อมูลเชิงลึก อ้างอิงรายละเอียดจาก 6) รายละเอียดสินค้า
 
@@ -123,7 +123,7 @@ const systemInstructions = '
    • เก็บเงินปลายทางได้
    • โอนจ่ายได้
    • หากต้องการดูรูปภาพ: “[SEND_IMAGE_APRICOT:https://i.imgur.com/XY0Nz82.jpeg]”
-';
+`;
 
 // ------------------------
 // Facebook Webhook Verify
@@ -158,13 +158,13 @@ app.post('/webhook', async (req, res) => {
         // ดึงประวัติการแชทจาก MongoDB
         const history = await getChatHistory(senderId);
 
-        // เรียก Assistant (ChatGPT) โดยส่ง System Instructions + ประวัติสนทนา + ข้อความใหม่
+        // เรียก Assistant (ChatGPT)
         const assistantResponse = await getAssistantResponse(history, messageText);
 
         // บันทึกประวัติใหม่ลงใน MongoDB
         await saveChatHistory(senderId, messageText, assistantResponse);
 
-        // ตอบกลับผู้ใช้ทาง Messenger
+        // ตอบกลับผู้ใช้
         sendTextMessage(senderId, assistantResponse);
 
       }
@@ -173,7 +173,7 @@ app.post('/webhook', async (req, res) => {
         const attachments = webhookEvent.message.attachments;
         let isImageFound = false;
 
-        // ตรวจสอบว่ามีภาพใน attachments หรือไม่
+        // ตรวจดูว่าเป็นรูปไหม
         for (let att of attachments) {
           if (att.type === 'image') {
             isImageFound = true;
@@ -182,28 +182,18 @@ app.post('/webhook', async (req, res) => {
         }
 
         if (isImageFound) {
-          // หากพบว่าเป็นรูปภาพ ให้บอก ChatGPT ว่า “ลูกค้าส่งรูปมา”
           const userMessage = "**ลูกค้าส่งรูปมา**";
-
-          // ดึงประวัติการแชท
           const history = await getChatHistory(senderId);
-
-          // เรียก Assistant
           const assistantResponse = await getAssistantResponse(history, userMessage);
 
-          // บันทึกลงใน MongoDB
           await saveChatHistory(senderId, userMessage, assistantResponse);
-
-          // ตอบกลับผู้ใช้
           sendTextMessage(senderId, assistantResponse);
         } else {
-          // หากเป็นไฟล์แนบอื่น เช่น location, file, audio...
           const userMessage = "**ลูกค้าส่งไฟล์แนบที่ไม่ใช่รูป**";
           const history = await getChatHistory(senderId);
           const assistantResponse = await getAssistantResponse(history, userMessage);
 
           await saveChatHistory(senderId, userMessage, assistantResponse);
-
           sendTextMessage(senderId, assistantResponse);
         }
       }
@@ -243,16 +233,14 @@ async function getChatHistory(senderId) {
 // ------------------------
 async function getAssistantResponse(history, message) {
   try {
-    // รวม system instructions + history + user message
     const messages = [
       { role: "system", content: systemInstructions },
       ...history,
       { role: "user", content: message },
     ];
 
-    // เรียกโมเดลผ่าน OpenAI API (เปลี่ยนชื่อโมเดลตามต้องการ)
     const response = await openai.chat.completions.create({
-      model: "gpt-4o", // ตัวอย่างโมเดล
+      model: "gpt-4o", // หรือ gpt-3.5-turbo
       messages: messages,
     });
 
@@ -289,26 +277,24 @@ async function saveChatHistory(senderId, message, response) {
 }
 
 // ------------------------
-// ฟังก์ชัน: sendTextMessage (รองรับหลายรูปพร้อมกัน)
+// ฟังก์ชัน: sendTextMessage
 // ------------------------
 function sendTextMessage(senderId, response) {
-  // Regex แบบ global เพื่อจับหลายคำสั่ง [SEND_IMAGE_APRICOT:URL]
+  // Regex จับ [SEND_IMAGE_APRICOT:URL]
   const imageRegex = /\[SEND_IMAGE_APRICOT:(https?:\/\/[^\s]+)\]/g;
-
-  // matchAll เพื่อดึง match หลายรายการ
   const matches = [...response.matchAll(imageRegex)];
 
-  // ตัดคำสั่ง [SEND_IMAGE_APRICOT:URL] ออกจากข้อความทั้งหมด
+  // ตัดคำสั่งออกจากข้อความ
   let textPart = response.replace(imageRegex, '').trim();
 
-  // ส่งข้อความ (ถ้ามี text เหลือ)
+  // ส่งข้อความปกติ
   if (textPart.length > 0) {
     sendSimpleTextMessage(senderId, textPart);
   }
 
-  // วนลูปส่งรูปทีละ match
+  // ส่งรูป (ถ้ามี)
   matches.forEach(match => {
-    const imageUrl = match[1];  // URL คือ group[2] จาก regex
+    const imageUrl = match[1];
     sendImageMessage(senderId, imageUrl);
   });
 }
