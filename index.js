@@ -33,7 +33,7 @@ app.use(bodyParser.json());
 // ------------------------
 const systemInstructions = `
 คุณเป็นแอดมินสำหรับตอบคำถามและขายสินค้าในเพจ Facebook  
-โปรดปฏิบัติตามขั้นตอนต่อไปนี้อย่างครบถ้วน โดยให้คำตอบเหมือนมนุษย์จริง ๆ  
+โปรดปฏิบัตามขั้นตอนต่อไปนี้อย่างครบถ้วน โดยให้คำตอบเหมือนมนุษย์จริง ๆ  
 และตอบตรงประเด็นที่ลูกค้าถาม ไม่ต้องมีเนื้อหาใด ๆ เพิ่มเติมนอกเหนือจากที่ลูกค้าถาม  
 หากลูกค้าถามข้อมูลเชิงลึก อ้างอิงรายละเอียดจาก 6) รายละเอียดสินค้า
 
@@ -48,7 +48,7 @@ const systemInstructions = `
 • เรียกลูกค้าว่า “คุณพี่” และใช้สรรพนาม “ครับ” (เพราะคุณเป็นผู้ชาย)  
 • หากลูกค้าสอบถามรายละเอียดสินค้า (เช่น ขนาด, ราคา) ให้ตอบเฉพาะที่ถูกถาม ไม่ต้องยืดเยื้อ  
 • หากลูกค้าพิมพ์ “ปลายทาง” ให้เข้าใจว่าเก็บเงินปลายทาง (COD) ได้ (ถ้าสินค้ารองรับ)
-• ถ้ามีโปรโมชันให้แจ้งราคาโปรโมชันกับลูกค้าเสมอ และใช้ราคาโปรโมชันเสมอ
+• ถ้ามีโปรโมชันให้แจ้งราคาโปรโมชันกับลูกค้าเสมอ
 • เมื่อคอนเฟิร์มออเดอร์แล้ว ให้ขอบคุณอย่างสุภาพก่อนปิดการขาย  
 • ขอชื่อ-ที่อยู่จัดส่ง **หลังจาก** ลูกค้าส่งสลิปการโอนเงินถ้าเป็นการโอน  
 • ถ้าลูกค้าไม่แจ้งว่าจะชำระเงินช่องทางไหน ให้เข้าใจว่าเก็บเงินปลายทางเสมอ
@@ -68,8 +68,7 @@ const systemInstructions = `
 ────────────────────────────────────────
 (ก) แอปริคอตแห้งไร้เมล็ดจากตุรกี
    • ราคาเริ่มต้น 98 บาท (โปรต่าง ๆ ตามที่กำหนด)
-   • เก็บเงินปลายทางได้
-   • โอนจ่ายได้
+   • บริการเก็บเงินปลายทาง (COD) เท่านั้น
    • เนื้อเหนียวนุ่ม รสหวานอมเปรี้ยว อุดมด้วยวิตามินและใยอาหาร
    • ควรบริโภคในปริมาณเหมาะสม
 
@@ -85,7 +84,7 @@ const systemInstructions = `
 • หลังรวมรายการที่ลูกค้าต้องการแล้ว ถ้ามีค่าส่งก็ +50 บาทครั้งเดียว (ยกเว้นโปรส่งฟรี)
 • ถามลูกค้าว่า “โอน หรือ ปลายทาง?”
    1. เก็บเงินปลายทาง (COD)
-   2. โอนผ่านธนาคารกสิกรไทย เลขที่บัญชี 116-1431-865 ชื่อบัญชี ศิริลักษณ์ มูลไชย
+   2. โอนผ่านธนาคารกรุงศรี เลขที่บัญชี 768-1-09390-6 ชื่อบัญชี สหภาคคุณ ภูนาขาว
 
 ────────────────────────────────────────
 4) การตรวจสอบข้อมูล
@@ -120,8 +119,7 @@ const systemInstructions = `
        - 2 ถุง = 180 บาท (ส่งฟรี)
        - 3 ถุง = 250 บาท (ส่งฟรี)
      (ภายใน 3 วัน)
-   • เก็บเงินปลายทางได้
-   • โอนจ่ายได้
+   • มีบริการเก็บเงินปลายทางเท่านั้น
    • หากต้องการดูรูปภาพ: “[SEND_IMAGE_APRICOT:https://i.imgur.com/XY0Nz82.jpeg]”
 `;
 
@@ -158,13 +156,13 @@ app.post('/webhook', async (req, res) => {
         // ดึงประวัติการแชทจาก MongoDB
         const history = await getChatHistory(senderId);
 
-        // เรียก Assistant (ChatGPT)
+        // เรียก Assistant (ChatGPT) โดยส่ง System Instructions + ประวัติสนทนา + ข้อความใหม่
         const assistantResponse = await getAssistantResponse(history, messageText);
 
         // บันทึกประวัติใหม่ลงใน MongoDB
         await saveChatHistory(senderId, messageText, assistantResponse);
 
-        // ตอบกลับผู้ใช้
+        // ตอบกลับผู้ใช้ทาง Messenger
         sendTextMessage(senderId, assistantResponse);
 
       }
@@ -173,7 +171,7 @@ app.post('/webhook', async (req, res) => {
         const attachments = webhookEvent.message.attachments;
         let isImageFound = false;
 
-        // ตรวจดูว่าเป็นรูปไหม
+        // ตรวจสอบว่ามีภาพใน attachments หรือไม่
         for (let att of attachments) {
           if (att.type === 'image') {
             isImageFound = true;
@@ -182,18 +180,28 @@ app.post('/webhook', async (req, res) => {
         }
 
         if (isImageFound) {
+          // หากพบว่าเป็นรูปภาพ ให้บอก ChatGPT ว่า “ลูกค้าส่งรูปมา”
           const userMessage = "**ลูกค้าส่งรูปมา**";
+
+          // ดึงประวัติการแชท
           const history = await getChatHistory(senderId);
+
+          // เรียก Assistant
           const assistantResponse = await getAssistantResponse(history, userMessage);
 
+          // บันทึกลงใน MongoDB
           await saveChatHistory(senderId, userMessage, assistantResponse);
+
+          // ตอบกลับผู้ใช้
           sendTextMessage(senderId, assistantResponse);
         } else {
+          // หากเป็นไฟล์แนบอื่น เช่น location, file, audio...
           const userMessage = "**ลูกค้าส่งไฟล์แนบที่ไม่ใช่รูป**";
           const history = await getChatHistory(senderId);
           const assistantResponse = await getAssistantResponse(history, userMessage);
 
           await saveChatHistory(senderId, userMessage, assistantResponse);
+
           sendTextMessage(senderId, assistantResponse);
         }
       }
@@ -233,14 +241,16 @@ async function getChatHistory(senderId) {
 // ------------------------
 async function getAssistantResponse(history, message) {
   try {
+    // รวม system instructions + history + user message
     const messages = [
       { role: "system", content: systemInstructions },
       ...history,
       { role: "user", content: message },
     ];
 
+    // เรียกโมเดลผ่าน OpenAI API (เปลี่ยนชื่อโมเดลตามต้องการ)
     const response = await openai.chat.completions.create({
-      model: "gpt-4o", // หรือ gpt-3.5-turbo
+      model: "gpt-4o", // ตัวอย่างโมเดล
       messages: messages,
     });
 
@@ -277,24 +287,26 @@ async function saveChatHistory(senderId, message, response) {
 }
 
 // ------------------------
-// ฟังก์ชัน: sendTextMessage
+// ฟังก์ชัน: sendTextMessage (รองรับหลายรูปพร้อมกัน)
 // ------------------------
 function sendTextMessage(senderId, response) {
-  // Regex จับ [SEND_IMAGE_APRICOT:URL]
+  // Regex แบบ global เพื่อจับหลายคำสั่ง [SEND_IMAGE_APRICOT:URL]
   const imageRegex = /\[SEND_IMAGE_APRICOT:(https?:\/\/[^\s]+)\]/g;
+
+  // matchAll เพื่อดึง match หลายรายการ
   const matches = [...response.matchAll(imageRegex)];
 
-  // ตัดคำสั่งออกจากข้อความ
+  // ตัดคำสั่ง [SEND_IMAGE_APRICOT:URL] ออกจากข้อความทั้งหมด
   let textPart = response.replace(imageRegex, '').trim();
 
-  // ส่งข้อความปกติ
+  // ส่งข้อความ (ถ้ามี text เหลือ)
   if (textPart.length > 0) {
     sendSimpleTextMessage(senderId, textPart);
   }
 
-  // ส่งรูป (ถ้ามี)
+  // วนลูปส่งรูปทีละ match
   matches.forEach(match => {
-    const imageUrl = match[1];
+    const imageUrl = match[1];  // URL คือ group[2] จาก regex
     sendImageMessage(senderId, imageUrl);
   });
 }
