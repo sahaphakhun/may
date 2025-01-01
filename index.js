@@ -22,8 +22,19 @@ const openai = new OpenAI({
   apiKey: OPENAI_API_KEY, // ใช้ API key จาก Environment Variable
 });
 
-// สร้าง MongoClient
-const client = new MongoClient(MONGO_URI);
+/*
+  แทนที่จะเปิด-ปิด MongoDB Client ในทุกฟังก์ชัน
+  เราจะใช้ global client ตัวเดียว
+*/
+let mongoClient = null;
+async function connectDB() {
+  if (!mongoClient) {
+    mongoClient = new MongoClient(MONGO_URI);
+    await mongoClient.connect();
+    console.log("MongoDB connected (global client).");
+  }
+  return mongoClient;
+}
 
 // ใช้ bodyParser
 app.use(bodyParser.json());
@@ -123,6 +134,13 @@ const systemInstructions = `
    • เก็บเงินปลายทางได้
    • โอนจ่ายได้
    • หากต้องการดูรูปภาพ: “[SEND_IMAGE_APRICOT:https://i.imgur.com/XY0Nz82.jpeg]”
+
+---------------------------------------------------------------
+(เพิ่ม) หากลูกค้าต้องการ “โอนจ่าย” หรือถาม “ขอเลขบัญชี” หรือ “โอนผ่านธนาคาร”:
+- ให้แจ้งเลขบัญชีตามนี้: 116-1431-865 ชื่อบัญชี ศิริลักษณ์ มูลไชย (กสิกรไทย)
+- และให้ส่งรูปภาพแนบด้วย: "[SEND_IMAGE_PAYMENT:https://i.imgur.com/gS0on5c.png]"
+
+• หากลูกค้าสนใจโอนจ่าย: ส่งภาพช่องทางโอน "[SEND_IMAGE_PAYMENT:https://i.imgur.com/gS0on5c.png]"
 `;
 
 // ------------------------
@@ -144,70 +162,37 @@ app.get('/webhook', (req, res) => {
 // Facebook Webhook Receiver
 // ------------------------
 app.post('/webhook', async (req, res) => {
-  const body = req.body;
-
-  if (body.object === 'page') {
-    body.entry.forEach(async (entry) => {
+  if (req.body.object === 'page') {
+    for (const entry of req.body.entry) {
       const webhookEvent = entry.messaging[0];
       const senderId = webhookEvent.sender.id;
 
-      // 1) กรณีลูกค้าส่งข้อความปกติ
       if (webhookEvent.message && webhookEvent.message.text) {
         const messageText = webhookEvent.message.text;
-
-        // ดึงประวัติการแชทจาก MongoDB
         const history = await getChatHistory(senderId);
-
-        // เรียก Assistant (ChatGPT) โดยส่ง System Instructions + ประวัติสนทนา + ข้อความใหม่
         const assistantResponse = await getAssistantResponse(history, messageText);
-
-        // บันทึกประวัติใหม่ลงใน MongoDB
         await saveChatHistory(senderId, messageText, assistantResponse);
-
-        // ตอบกลับผู้ใช้ทาง Messenger
         sendTextMessage(senderId, assistantResponse);
-
       }
-      // 2) กรณีลูกค้าส่งรูป (หรือ attachment) แต่ไม่มี text
       else if (webhookEvent.message && webhookEvent.message.attachments) {
         const attachments = webhookEvent.message.attachments;
-        let isImageFound = false;
-
-        // ตรวจสอบว่ามีภาพใน attachments หรือไม่
-        for (let att of attachments) {
-          if (att.type === 'image') {
-            isImageFound = true;
-            break;
-          }
-        }
+        const isImageFound = attachments.some(att => att.type === 'image');
 
         if (isImageFound) {
-          // หากพบว่าเป็นรูปภาพ ให้บอก ChatGPT ว่า “ลูกค้าส่งรูปมา”
           const userMessage = "**ลูกค้าส่งรูปมา**";
-
-          // ดึงประวัติการแชท
           const history = await getChatHistory(senderId);
-
-          // เรียก Assistant
           const assistantResponse = await getAssistantResponse(history, userMessage);
-
-          // บันทึกลงใน MongoDB
           await saveChatHistory(senderId, userMessage, assistantResponse);
-
-          // ตอบกลับผู้ใช้
           sendTextMessage(senderId, assistantResponse);
         } else {
-          // หากเป็นไฟล์แนบอื่น เช่น location, file, audio...
           const userMessage = "**ลูกค้าส่งไฟล์แนบที่ไม่ใช่รูป**";
           const history = await getChatHistory(senderId);
           const assistantResponse = await getAssistantResponse(history, userMessage);
-
           await saveChatHistory(senderId, userMessage, assistantResponse);
-
           sendTextMessage(senderId, assistantResponse);
         }
       }
-    });
+    }
     res.status(200).send('EVENT_RECEIVED');
   } else {
     res.sendStatus(404);
@@ -215,26 +200,35 @@ app.post('/webhook', async (req, res) => {
 });
 
 // ------------------------
+// ฟังก์ชัน: เชื่อมต่อ MongoDB (Global client)
+// ------------------------
+let mongoClient = null;
+async function connectDB() {
+  if (!mongoClient) {
+    mongoClient = new MongoClient(MONGO_URI);
+    await mongoClient.connect();
+    console.log("MongoDB connected (global client).");
+  }
+  return mongoClient;
+}
+
+// ------------------------
 // ฟังก์ชัน: getChatHistory
 // ------------------------
 async function getChatHistory(senderId) {
   try {
-    await client.connect();
+    const client = await connectDB();
     const db = client.db("chatbot");
     const collection = db.collection("chat_history");
 
     const chats = await collection.find({ senderId }).toArray();
-
-    // แปลงเป็นรูปแบบข้อความตาม role: "user"
-    return chats.map((chat) => ({
+    return chats.map(chat => ({
       role: "user",
       content: chat.message,
     }));
   } catch (error) {
     console.error("Error fetching chat history:", error);
     return [];
-  } finally {
-    await client.close();
   }
 }
 
@@ -243,19 +237,16 @@ async function getChatHistory(senderId) {
 // ------------------------
 async function getAssistantResponse(history, message) {
   try {
-    // รวม system instructions + history + user message
     const messages = [
       { role: "system", content: systemInstructions },
       ...history,
       { role: "user", content: message },
     ];
 
-    // เรียกโมเดลผ่าน OpenAI API (เปลี่ยนชื่อโมเดลตามต้องการ)
     const response = await openai.chat.completions.create({
-      model: "gpt-4o", // ตัวอย่างโมเดล
+      model: "gpt-4o", // หรือ gpt-3.5-turbo ฯลฯ
       messages: messages,
     });
-
     return response.choices[0].message.content;
   } catch (error) {
     console.error("Error with ChatGPT Assistant:", error);
@@ -268,7 +259,7 @@ async function getAssistantResponse(history, message) {
 // ------------------------
 async function saveChatHistory(senderId, message, response) {
   try {
-    await client.connect();
+    const client = await connectDB();
     const db = client.db("chatbot");
     const collection = db.collection("chat_history");
 
@@ -279,36 +270,44 @@ async function saveChatHistory(senderId, message, response) {
       timestamp: new Date(),
     };
     await collection.insertOne(chatRecord);
-
     console.log("บันทึกประวัติการแชทสำเร็จ");
   } catch (error) {
     console.error("Error saving chat history:", error);
-  } finally {
-    await client.close();
   }
 }
 
 // ------------------------
-// ฟังก์ชัน: sendTextMessage (รองรับหลายรูปพร้อมกัน)
+// ฟังก์ชัน: sendTextMessage
 // ------------------------
 function sendTextMessage(senderId, response) {
-  // Regex แบบ global เพื่อจับหลายคำสั่ง [SEND_IMAGE_APRICOT:URL]
-  const imageRegex = /\[SEND_IMAGE_APRICOT:(https?:\/\/[^\s]+)\]/g;
+  // จับ 2 กรณี: [SEND_IMAGE_APRICOT:..] และ [SEND_IMAGE_PAYMENT:..]
+  const apricotRegex = /\[SEND_IMAGE_APRICOT:(https?:\/\/[^\s]+)\]/g;
+  const paymentRegex = /\[SEND_IMAGE_PAYMENT:(https?:\/\/[^\s]+)\]/g;
 
-  // matchAll เพื่อดึง match หลายรายการ
-  const matches = [...response.matchAll(imageRegex)];
+  // matchAll
+  const apricotMatches = [...response.matchAll(apricotRegex)];
+  const paymentMatches = [...response.matchAll(paymentRegex)];
 
-  // ตัดคำสั่ง [SEND_IMAGE_APRICOT:URL] ออกจากข้อความทั้งหมด
-  let textPart = response.replace(imageRegex, '').trim();
+  // ตัดคำสั่งออกจาก response
+  let textPart = response
+    .replace(apricotRegex, '')
+    .replace(paymentRegex, '')
+    .trim();
 
-  // ส่งข้อความ (ถ้ามี text เหลือ)
+  // ส่งข้อความปกติ
   if (textPart.length > 0) {
     sendSimpleTextMessage(senderId, textPart);
   }
 
-  // วนลูปส่งรูปทีละ match
-  matches.forEach(match => {
-    const imageUrl = match[1];  // URL คือ group[2] จาก regex
+  // ส่งรูปแอปริคอต
+  apricotMatches.forEach(match => {
+    const imageUrl = match[1];
+    sendImageMessage(senderId, imageUrl);
+  });
+
+  // ส่งรูปช่องทางโอน
+  paymentMatches.forEach(match => {
+    const imageUrl = match[1];
     sendImageMessage(senderId, imageUrl);
   });
 }
@@ -319,7 +318,7 @@ function sendTextMessage(senderId, response) {
 function sendSimpleTextMessage(senderId, text) {
   const requestBody = {
     recipient: { id: senderId },
-    message: { text: text },
+    message: { text },
   };
 
   request({
@@ -327,7 +326,7 @@ function sendSimpleTextMessage(senderId, text) {
     qs: { access_token: PAGE_ACCESS_TOKEN },
     method: 'POST',
     json: requestBody,
-  }, (err, res, body) => {
+  }, (err) => {
     if (!err) {
       console.log('ข้อความถูกส่งสำเร็จ!');
     } else {
@@ -358,7 +357,7 @@ function sendImageMessage(senderId, imageUrl) {
     qs: { access_token: PAGE_ACCESS_TOKEN },
     method: 'POST',
     json: requestBody,
-  }, (err, res, body) => {
+  }, (err) => {
     if (!err) {
       console.log('รูปภาพถูกส่งสำเร็จ!');
     } else {
@@ -370,6 +369,12 @@ function sendImageMessage(senderId, imageUrl) {
 // ------------------------
 // Start Server
 // ------------------------
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server is running on port ${PORT}`);
+  // เชื่อม MongoDB ตอน start server
+  try {
+    await connectDB();
+  } catch (err) {
+    console.error("MongoDB connect error at startup:", err);
+  }
 });
