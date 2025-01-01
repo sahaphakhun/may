@@ -305,7 +305,7 @@ function sendTextMessage(senderId, response) {
 
   // วนลูปส่งรูปทีละ match
   matches.forEach(match => {
-    const imageUrl = match[2];  // URL คือ group[2] จาก regex
+    const imageUrl = match[1];  // URL คือ group[2] จาก regex
     sendImageMessage(senderId, imageUrl);
   });
 }
