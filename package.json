@@ -1,0 +1,14 @@
+{
+  "name": "facebook-may",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "body-parser": "^1.20.3",
+    "request": "^2.88.2",
+    "openai": "^4.0.0",
+    "mongodb": "^6.12.0"
+  }
+}
