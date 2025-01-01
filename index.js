@@ -6,6 +6,11 @@ const bodyParser = require('body-parser');
 const request = require('request');
 const { OpenAI } = require('openai');
 const { MongoClient } = require('mongodb');
+const { google } = require('googleapis');
+
+// โหลด Credentials จากไฟล์ JSON หรือ Environment
+// ตัวอย่างนี้สมมติว่าไฟล์ชื่อ service-account.json (วางในโปรเจกต์)
+const serviceAccount = require('./service-account.json');
 
 // สร้าง Express App
 const app = express();
@@ -16,6 +21,9 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "XianTA1234";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const MONGO_URI = process.env.MONGO_URI;
+
+// Spreadsheet ID (ดูใน URL Google Sheets)
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID || "1ABCDEFG..."; 
 
 // สร้าง OpenAI Instance
 const openai = new OpenAI({
@@ -29,7 +37,7 @@ const client = new MongoClient(MONGO_URI);
 app.use(bodyParser.json());
 
 // ------------------------
-// System Instructions (แก้ไขให้พร้อมใช้งานกับแอปริคอตแห้ง)
+// System Instructions (ปรับตามต้องการ)
 // ------------------------
 const systemInstructions = `
 คุณเป็นแอดมินสำหรับตอบคำถามและขายสินค้าในเพจ Facebook  
@@ -122,6 +130,48 @@ const systemInstructions = `
    • มีบริการเก็บเงินปลายทางเท่านั้น
    • หากต้องการดูรูปภาพ: “[SEND_IMAGE_APRICOT:https://i.imgur.com/XY0Nz82.jpeg]”
 `;
+// ------------------------
+// ฟังก์ชัน: เชื่อม Google Sheets (Service Account)
+// ------------------------
+async function saveOrderToSheet(orderData) {
+  try {
+    const { client_email, private_key } = serviceAccount;
+    // Auth
+    const auth = new google.auth.JWT(
+      client_email,
+      null,
+      private_key,
+      ['https://www.googleapis.com/auth/spreadsheets'] // scope
+    );
+    await auth.authorize();
+
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    // ตัวอย่าง: append values
+    // orderData = { name, address, items, totalPrice, phone, ... }
+    const range = 'Sheet1!A2'; // หรือชื่อชีทกับ cell เริ่มต้น
+    const values = [[
+      new Date().toLocaleString(),
+      orderData.name || '',
+      orderData.address || '',
+      orderData.phone || '',
+      orderData.items || '',
+      orderData.totalPrice || ''
+    ]];
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      resource: { values }
+    });
+
+    console.log('บันทึกข้อมูลลง Google Sheet สำเร็จ!');
+  } catch (err) {
+    console.error('Error saving to Google Sheet:', err);
+  }
+}
 
 // ------------------------
 // Facebook Webhook Verify
@@ -156,22 +206,38 @@ app.post('/webhook', async (req, res) => {
         // ดึงประวัติการแชทจาก MongoDB
         const history = await getChatHistory(senderId);
 
-        // เรียก Assistant (ChatGPT) โดยส่ง System Instructions + ประวัติสนทนา + ข้อความใหม่
+        // เรียก Assistant (ChatGPT)
         const assistantResponse = await getAssistantResponse(history, messageText);
 
         // บันทึกประวัติใหม่ลงใน MongoDB
         await saveChatHistory(senderId, messageText, assistantResponse);
 
+        // ตรวจว่า "คอนเฟิร์มออเดอร์" หรือยัง?
+        // สมมติถ้าลูกค้าใช้คำว่า "คอนเฟิร์ม" + มีที่อยู่ + เบอร์ + จำนวน
+        // ตรงนี้ขึ้นอยู่กับ logic ว่าคุณจะ parse ข้อความอย่างไร
+        // ตัวอย่างง่าย ๆ:
+        if (messageText.includes('คอนเฟิร์ม')) {
+          // สมมติ orderData เก็บจาก content
+          // (จริงๆ ต้องมี parse or entity extraction)
+          const orderData = {
+            name: "คุณพี่",       // ตัวอย่าง สมมติ
+            address: "..." ,      // ดึงจาก content
+            phone: "..." ,        // ดึงจาก content
+            items: "แอปริคอต x2",
+            totalPrice: 180
+          };
+          await saveOrderToSheet(orderData);
+        }
+
         // ตอบกลับผู้ใช้ทาง Messenger
         sendTextMessage(senderId, assistantResponse);
 
-      }
+      } 
       // 2) กรณีลูกค้าส่งรูป (หรือ attachment) แต่ไม่มี text
       else if (webhookEvent.message && webhookEvent.message.attachments) {
         const attachments = webhookEvent.message.attachments;
         let isImageFound = false;
 
-        // ตรวจสอบว่ามีภาพใน attachments หรือไม่
         for (let att of attachments) {
           if (att.type === 'image') {
             isImageFound = true;
@@ -180,28 +246,18 @@ app.post('/webhook', async (req, res) => {
         }
 
         if (isImageFound) {
-          // หากพบว่าเป็นรูปภาพ ให้บอก ChatGPT ว่า “ลูกค้าส่งรูปมา”
           const userMessage = "**ลูกค้าส่งรูปมา**";
-
-          // ดึงประวัติการแชท
           const history = await getChatHistory(senderId);
-
-          // เรียก Assistant
           const assistantResponse = await getAssistantResponse(history, userMessage);
 
-          // บันทึกลงใน MongoDB
           await saveChatHistory(senderId, userMessage, assistantResponse);
-
-          // ตอบกลับผู้ใช้
           sendTextMessage(senderId, assistantResponse);
         } else {
-          // หากเป็นไฟล์แนบอื่น เช่น location, file, audio...
           const userMessage = "**ลูกค้าส่งไฟล์แนบที่ไม่ใช่รูป**";
           const history = await getChatHistory(senderId);
           const assistantResponse = await getAssistantResponse(history, userMessage);
 
           await saveChatHistory(senderId, userMessage, assistantResponse);
-
           sendTextMessage(senderId, assistantResponse);
         }
       }
@@ -241,16 +297,14 @@ async function getChatHistory(senderId) {
 // ------------------------
 async function getAssistantResponse(history, message) {
   try {
-    // รวม system instructions + history + user message
     const messages = [
       { role: "system", content: systemInstructions },
       ...history,
       { role: "user", content: message },
     ];
 
-    // เรียกโมเดลผ่าน OpenAI API (เปลี่ยนชื่อโมเดลตามต้องการ)
     const response = await openai.chat.completions.create({
-      model: "gpt-4o", // ตัวอย่างโมเดล
+      model: "gpt-3.5-turbo", // หรือ gpt-4, gpt-4o
       messages: messages,
     });
 
@@ -290,23 +344,20 @@ async function saveChatHistory(senderId, message, response) {
 // ฟังก์ชัน: sendTextMessage (รองรับหลายรูปพร้อมกัน)
 // ------------------------
 function sendTextMessage(senderId, response) {
-  // Regex แบบ global เพื่อจับหลายคำสั่ง [SEND_IMAGE_APRICOT:URL]
+  // จับคำสั่ง [SEND_IMAGE_APRICOT:URL]
   const imageRegex = /\[SEND_IMAGE_APRICOT:(https?:\/\/[^\s]+)\]/g;
-
-  // matchAll เพื่อดึง match หลายรายการ
   const matches = [...response.matchAll(imageRegex)];
 
-  // ตัดคำสั่ง [SEND_IMAGE_APRICOT:URL] ออกจากข้อความทั้งหมด
   let textPart = response.replace(imageRegex, '').trim();
 
-  // ส่งข้อความ (ถ้ามี text เหลือ)
   if (textPart.length > 0) {
     sendSimpleTextMessage(senderId, textPart);
   }
 
-  // วนลูปส่งรูปทีละ match
   matches.forEach(match => {
-    const imageUrl = match[1];  // URL คือ group[2] จาก regex
+    // match[0] = "[SEND_IMAGE_APRICOT:https://i.imgur.com/OgW7m9x.jpeg]"
+    // match[1] = "https://i.imgur.com/OgW7m9x.jpeg"
+    const imageUrl = match[1];
     sendImageMessage(senderId, imageUrl);
   });
 }
@@ -325,7 +376,7 @@ function sendSimpleTextMessage(senderId, text) {
     qs: { access_token: PAGE_ACCESS_TOKEN },
     method: 'POST',
     json: requestBody,
-  }, (err, res, body) => {
+  }, (err, _res, _body) => {
     if (!err) {
       console.log('ข้อความถูกส่งสำเร็จ!');
     } else {
@@ -356,7 +407,7 @@ function sendImageMessage(senderId, imageUrl) {
     qs: { access_token: PAGE_ACCESS_TOKEN },
     method: 'POST',
     json: requestBody,
-  }, (err, res, body) => {
+  }, (err, _res, _body) => {
     if (!err) {
       console.log('รูปภาพถูกส่งสำเร็จ!');
     } else {
