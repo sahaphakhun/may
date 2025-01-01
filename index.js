@@ -202,7 +202,6 @@ app.post('/webhook', async (req, res) => {
 // ------------------------
 // ฟังก์ชัน: เชื่อมต่อ MongoDB (Global client)
 // ------------------------
-let mongoClient = null;
 async function connectDB() {
   if (!mongoClient) {
     mongoClient = new MongoClient(MONGO_URI);
