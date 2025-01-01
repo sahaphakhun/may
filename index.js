@@ -6,10 +6,11 @@ const bodyParser = require('body-parser');
 const request = require('request');
 const { OpenAI } = require('openai');
 const { MongoClient } = require('mongodb');
+
+// เพิ่ม googleapis สำหรับเชื่อม Google Sheets
 const { google } = require('googleapis');
 
-// โหลด Credentials จากไฟล์ JSON หรือ Environment
-// ตัวอย่างนี้สมมติว่าไฟล์ชื่อ service-account.json (วางในโปรเจกต์)
+// โหลดไฟล์ Service Account JSON (ปรับ path ตามจริง หรืออ่านจาก ENV แทน)
 const serviceAccount = require('./service-account.json');
 
 // สร้าง Express App
@@ -22,8 +23,8 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const MONGO_URI = process.env.MONGO_URI;
 
-// Spreadsheet ID (ดูใน URL Google Sheets)
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID || "1ABCDEFG..."; 
+// เพิ่มตัวแปร SPREADSHEET_ID (มาจาก URL ของ Google Sheet)
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID || "1ABCDEFG_ExampleIDxxxx"; 
 
 // สร้าง OpenAI Instance
 const openai = new OpenAI({
@@ -37,11 +38,11 @@ const client = new MongoClient(MONGO_URI);
 app.use(bodyParser.json());
 
 // ------------------------
-// System Instructions (ปรับตามต้องการ)
+// System Instructions (แก้ไขให้พร้อมใช้งานกับแอปริคอตแห้ง + เพิ่มสั่งคอนเฟิร์มออเดอร์)
 // ------------------------
 const systemInstructions = `
 คุณเป็นแอดมินสำหรับตอบคำถามและขายสินค้าในเพจ Facebook  
-โปรดปฏิบัตามขั้นตอนต่อไปนี้อย่างครบถ้วน โดยให้คำตอบเหมือนมนุษย์จริง ๆ  
+โปรดปฏิบัติตามขั้นตอนต่อไปนี้อย่างครบถ้วน โดยให้คำตอบเหมือนมนุษย์จริง ๆ  
 และตอบตรงประเด็นที่ลูกค้าถาม ไม่ต้องมีเนื้อหาใด ๆ เพิ่มเติมนอกเหนือจากที่ลูกค้าถาม  
 หากลูกค้าถามข้อมูลเชิงลึก อ้างอิงรายละเอียดจาก 6) รายละเอียดสินค้า
 
@@ -56,8 +57,9 @@ const systemInstructions = `
 • เรียกลูกค้าว่า “คุณพี่” และใช้สรรพนาม “ครับ” (เพราะคุณเป็นผู้ชาย)  
 • หากลูกค้าสอบถามรายละเอียดสินค้า (เช่น ขนาด, ราคา) ให้ตอบเฉพาะที่ถูกถาม ไม่ต้องยืดเยื้อ  
 • หากลูกค้าพิมพ์ “ปลายทาง” ให้เข้าใจว่าเก็บเงินปลายทาง (COD) ได้ (ถ้าสินค้ารองรับ)
-• ถ้ามีโปรโมชันให้แจ้งราคาโปรโมชันกับลูกค้าเสมอ และใช้ราคาโปรโมชันเสมอ
+• ถ้ามีโปรโมชันให้แจ้งราคาโปรโมชันกับลูกค้าเสมอ
 • เมื่อคอนเฟิร์มออเดอร์แล้ว ให้ขอบคุณอย่างสุภาพก่อนปิดการขาย  
+  - ส่วนโค้ด Node.js จะทำการบันทึกข้อมูลออเดอร์ลง Google Sheet
 • ขอชื่อ-ที่อยู่จัดส่ง **หลังจาก** ลูกค้าส่งสลิปการโอนเงินถ้าเป็นการโอน  
 • ถ้าลูกค้าไม่แจ้งว่าจะชำระเงินช่องทางไหน ให้เข้าใจว่าเก็บเงินปลายทางเสมอ
 • **ส่งรูปสินค้าได้เฉพาะ** เมื่อข้อความล่าสุดของลูกค้าขอดูรูปสินค้าเท่านั้น  
@@ -70,7 +72,7 @@ const systemInstructions = `
   หรือหากเป็นไฟล์แนบอื่น (location, file, audio ฯลฯ) เซิร์ฟเวอร์จะส่งว่า "**ลูกค้าส่งไฟล์แนบที่ไม่ใช่รูป**"
   - ข้อความ 2 แบบนี้ไม่ใช่คำพูดของลูกค้า แต่เป็นระบบแจ้งเพื่อบอกคุณ
 • ห้ามตอบยาวเกินความจำเป็น ห้ามถามคำถามซ้ำ ๆ ที่ลูกค้าได้ตอบไปแล้ว
-• เมื่อคอนเฟิร์มออเดอร์ (ลูกค้าบอกชื่อ, ที่อยู่, รายการ) ให้โค้ดฝั่ง Node.js บันทึกลง Google Sheet โดยคุณจะต้องแจ้งลูกค้าว่า “ขอบคุณครับคุณพี่ รับออเดอร์ครับ” เสมอ และบอกเพียงครั้งเดียวเท่านั้น ยกเว้นเพียงแต่ว่าจะมีการซื้อชิ้นใหม่จากลูกค้าคนเดิม
+
 ────────────────────────────────────────
 2) สินค้า (สรุปสั้น)
 ────────────────────────────────────────
@@ -130,48 +132,57 @@ const systemInstructions = `
    • มีบริการเก็บเงินปลายทางเท่านั้น
    • หากต้องการดูรูปภาพ: “[SEND_IMAGE_APRICOT:https://i.imgur.com/XY0Nz82.jpeg]”
 `;
+
 // ------------------------
-// ฟังก์ชัน: เชื่อม Google Sheets (Service Account)
+// เพิ่มฟังก์ชันบันทึกลง Google Sheets
 // ------------------------
+const { google } = require('googleapis');
+// โหลด credentials service account (ในที่นี้ require ไฟล์)
+const serviceAccount = require('./service-account.json'); // ชื่อตัวอย่าง
+
+// ใช้ในฟังก์ชัน saveOrderToSheet
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID || '1ABCDEFG....'; // ใส่ของจริง
+
 async function saveOrderToSheet(orderData) {
   try {
-    const { client_email, private_key } = serviceAccount;
     // Auth
+    const { client_email, private_key } = serviceAccount;
     const auth = new google.auth.JWT(
       client_email,
       null,
       private_key,
-      ['https://www.googleapis.com/auth/spreadsheets'] // scope
+      ['https://www.googleapis.com/auth/spreadsheets']
     );
     await auth.authorize();
 
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // ตัวอย่าง: append values
-    // orderData = { name, address, items, totalPrice, phone, ... }
-    const range = 'Sheet1!A2'; // หรือชื่อชีทกับ cell เริ่มต้น
+    // สร้าง row data ที่ต้องการ
+    // orderData = { name, address, phone, itemCount, totalPrice, ...}
     const values = [[
       new Date().toLocaleString(),
       orderData.name || '',
       orderData.address || '',
       orderData.phone || '',
-      orderData.items || '',
+      orderData.itemCount || '',
       orderData.totalPrice || ''
     ]];
 
+    // Append ลงไปใน Sheet1!A2 เป็นต้นไป
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range,
+      range: 'Sheet1!A2',
       valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
       resource: { values }
     });
 
-    console.log('บันทึกข้อมูลลง Google Sheet สำเร็จ!');
+    console.log('บันทึกข้อมูลออเดอร์ลง Google Sheet สำเร็จ!');
   } catch (err) {
     console.error('Error saving to Google Sheet:', err);
   }
 }
+
 
 // ------------------------
 // Facebook Webhook Verify
@@ -189,7 +200,7 @@ app.get('/webhook', (req, res) => {
 });
 
 // ------------------------
-// Facebook Webhook Receiver
+// server.js
 // ------------------------
 app.post('/webhook', async (req, res) => {
   const body = req.body;
@@ -203,41 +214,40 @@ app.post('/webhook', async (req, res) => {
       if (webhookEvent.message && webhookEvent.message.text) {
         const messageText = webhookEvent.message.text;
 
-        // ดึงประวัติการแชทจาก MongoDB
+        // 1. ดึงประวัติการแชทจาก MongoDB
         const history = await getChatHistory(senderId);
 
-        // เรียก Assistant (ChatGPT)
+        // 2. เรียก Assistant (ChatGPT)
         const assistantResponse = await getAssistantResponse(history, messageText);
 
-        // บันทึกประวัติใหม่ลงใน MongoDB
+        // 3. บันทึกประวัติใหม่ลงใน MongoDB
         await saveChatHistory(senderId, messageText, assistantResponse);
 
-        // ตรวจว่า "คอนเฟิร์มออเดอร์" หรือยัง?
-        // สมมติถ้าลูกค้าใช้คำว่า "คอนเฟิร์ม" + มีที่อยู่ + เบอร์ + จำนวน
-        // ตรงนี้ขึ้นอยู่กับ logic ว่าคุณจะ parse ข้อความอย่างไร
-        // ตัวอย่างง่าย ๆ:
+        // 4. ตรวจจับ "คอนเฟิร์มออเดอร์" (ตัวอย่างง่าย ๆ)
+        // อาจเช็กเงื่อนไข / parse ข้อความจริงจัง
         if (messageText.includes('คอนเฟิร์ม')) {
-          // สมมติ orderData เก็บจาก content
-          // (จริงๆ ต้องมี parse or entity extraction)
+          // สมมุติว่าเรามีข้อมูลออเดอร์เก็บจาก Chat หรือ parse
+          // (ในระบบจริงจะมีการจัดเก็บ name/address/phone ฯลฯ)
           const orderData = {
-            name: "คุณพี่",       // ตัวอย่าง สมมติ
-            address: "..." ,      // ดึงจาก content
-            phone: "..." ,        // ดึงจาก content
-            items: "แอปริคอต x2",
+            name: 'ตัวอย่างชื่อ',        // ตัวอย่าง
+            address: 'ตัวอย่างที่อยู่',   // ตัวอย่าง
+            phone: '081-xxx-xxxx',       // ตัวอย่าง
+            itemCount: 2,
             totalPrice: 180
           };
           await saveOrderToSheet(orderData);
         }
 
-        // ตอบกลับผู้ใช้ทาง Messenger
+        // 5. ตอบกลับผู้ใช้ทาง Messenger
         sendTextMessage(senderId, assistantResponse);
 
-      } 
+      }
       // 2) กรณีลูกค้าส่งรูป (หรือ attachment) แต่ไม่มี text
       else if (webhookEvent.message && webhookEvent.message.attachments) {
         const attachments = webhookEvent.message.attachments;
         let isImageFound = false;
 
+        // ตรวจว่ามีภาพหรือไม่
         for (let att of attachments) {
           if (att.type === 'image') {
             isImageFound = true;
@@ -303,8 +313,9 @@ async function getAssistantResponse(history, message) {
       { role: "user", content: message },
     ];
 
+    // เรียกโมเดลผ่าน OpenAI API
     const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo", // หรือ gpt-4, gpt-4o
+      model: "gpt-4o", // หรือ gpt-3.5-turbo
       messages: messages,
     });
 
@@ -341,7 +352,7 @@ async function saveChatHistory(senderId, message, response) {
 }
 
 // ------------------------
-// ฟังก์ชัน: sendTextMessage (รองรับหลายรูปพร้อมกัน)
+// ฟังก์ชัน: sendTextMessage (รองรับรูปด้วย Regex)
 // ------------------------
 function sendTextMessage(senderId, response) {
   // จับคำสั่ง [SEND_IMAGE_APRICOT:URL]
@@ -350,13 +361,14 @@ function sendTextMessage(senderId, response) {
 
   let textPart = response.replace(imageRegex, '').trim();
 
+  // ส่งข้อความส่วน text
   if (textPart.length > 0) {
     sendSimpleTextMessage(senderId, textPart);
   }
 
+  // ส่งรูป ถ้ามี
   matches.forEach(match => {
-    // match[0] = "[SEND_IMAGE_APRICOT:https://i.imgur.com/OgW7m9x.jpeg]"
-    // match[1] = "https://i.imgur.com/OgW7m9x.jpeg"
+    // match[1] คือ URL
     const imageUrl = match[1];
     sendImageMessage(senderId, imageUrl);
   });
