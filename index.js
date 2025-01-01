@@ -290,7 +290,7 @@ async function saveChatHistory(senderId, message, response) {
 // ------------------------
 function sendTextMessage(senderId, response) {
   // Regex แบบ global เพื่อจับหลายคำสั่ง [SEND_IMAGE_XXX:URL]
-  const imageRegex = /\[SEND_IMAGE_(HUNN|SROI):(https?:\/\/[^\s]+)\]/g;
+  const imageRegex = /\[SEND_IMAGE_APRICOT:(https?:\/\/[^\s]+)\]/g;
 
   // matchAll เพื่อดึง match หลายรายการ
   const matches = [...response.matchAll(imageRegex)];
